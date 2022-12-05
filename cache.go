@@ -3,7 +3,6 @@ package stablecache
 import (
 	"errors"
 	"math/rand"
-	"sync"
 	"time"
 )
 
@@ -41,12 +40,12 @@ type noCopy struct{}
 
 func (*noCopy) Lock() {}
 
-type Method int8
+type Type int8
 
 const (
-	LRU Method = iota
-	LFU        = iota
-	ARC        = iota
+	LRU Type = iota
+	LFU      = iota
+	ARC      = iota
 )
 
 var (
@@ -55,19 +54,14 @@ var (
 	Disuse   = errors.New("disuse")
 )
 
-// Cache
-type Cache struct {
-	noCopy
-	defaultDuration time.Duration
-	mu              sync.RWMutex
-	method          Method
-	items           map[string]Item
-	janitor         *janitor
-	// barrier bool
-	randfunc func(int64, int64) bool
-	caller   func(string) (interface{}, error)
-	size     uint32
-	// order Order
+type Cache interface {
+	WithCallback(func(string) (interface{}, error))
+	WithRandfunc(func(int64, int64) bool)
+	Get(k string) (r any, err error)
+	Set(k string, v any)
+	SetWithExp(k string, v any, dur time.Duration)
+	refresh(k string, i Item)
+	Load(ks []string)
 }
 
 func randfunc(t, d int64) bool {
@@ -78,115 +72,28 @@ func randfunc(t, d int64) bool {
 	return false
 }
 
-// New new a cache
-func New() *Cache {
-	items := make(map[string]Item)
-	return &Cache{
-		items:           items,
-		defaultDuration: 10 * time.Second,
-		randfunc:        randfunc,
-	}
-}
+// New new a Cache
+// support type:
+// - nolimit
+// - limit_lru
+// - limit_lfu
+// - fragmented
 
-// WithCallback set callback
-func (c *Cache) WithCallback(call func(string) (interface{}, error)) *Cache {
-	c.caller = call
-	return c
-}
-
-// WithRandfunc set rand func
-func (c *Cache) WithRandfunc(call func(int64, int64) bool) *Cache {
-	c.randfunc = call
-	return c
-}
-
-// Get cache value
-// error maybe not found, timeout
-func (c *Cache) Get(k string) (r any, err error) {
-	c.mu.RLock()
-	v, ok := c.items[k]
-	if !ok {
-		if c.caller == nil {
-			return nil, NotFound
+func New(t string) Cache {
+	switch t {
+	case "nolimit":
+		return &SimpleCache{
+			items:           make(map[string]Item),
+			defaultDuration: 10 * time.Second,
+			randfunc:        randfunc,
 		}
-		c.mu.RUnlock()
-		v, err := c.caller(k)
-		if err != nil {
-			return nil, NotFound
-		}
-		c.SetWithExp(k, v, c.defaultDuration)
-		return v, nil
-	}
-	c.mu.RUnlock()
-	if v.Expired() {
-		c.Refresh(k, v)
-		return v.obj, Timeout
-	}
-	if v.Disuse() {
-		c.Refresh(k, v)
-		return v.obj, Disuse
-	}
-	c.Refresh(k, v)
-	return v.obj, nil
-}
-
-// Set set cache
-func (c *Cache) Set(k string, v any) {
-	c.SetWithExp(k, v, c.defaultDuration)
-}
-
-// SetWithExp actively set cache value
-func (c *Cache) SetWithExp(k string, v any, dur time.Duration) {
-	c.mu.Lock()
-	i, ok := c.items[k]
-	if ok {
-		i.obj = v
-		i.expiration = time.Now().Add(dur).UnixNano()
-		i.duration = int64(dur)
-		// c.items[k] = i
-		c.mu.Unlock()
-		return
-	}
-	c.items[k] = Item{
-		obj:        v,
-		expiration: time.Now().Add(dur).UnixNano(),
-		duration:   int64(dur),
-		color:      black,
-	}
-	c.mu.Unlock()
-}
-
-func (c *Cache) Refresh(k string, i Item) {
-	if c.caller == nil {
-		return
-	}
-	t := i.expiration - time.Now().UnixNano()
-	if t > 0 && t*100/i.duration < 30 {
-		if c.randfunc != nil && !c.randfunc(t, i.duration) {
-			return
-		}
-		v, err := c.caller(k)
-		if err == nil {
-			c.SetWithExp(k, v, c.defaultDuration)
+	default:
+		return &SimpleCache{
+			items:           make(map[string]Item),
+			defaultDuration: 10 * time.Second,
+			randfunc:        randfunc,
 		}
 	}
-}
-
-// Load load keys avoid concurrent large traffic penetration
-func (c *Cache) Load(ks []string) {
-	if c.caller == nil {
-		return
-	}
-	for _, k := range ks {
-		v, err := c.caller(k)
-		if err == nil {
-			c.SetWithExp(k, v, c.defaultDuration)
-		}
-	}
-}
-
-func (c *Cache) DeleteExpired() {
-	// TODO:
 }
 
 type janitor struct {
@@ -194,12 +101,12 @@ type janitor struct {
 	stop     chan bool
 }
 
-func (j *janitor) Run(c *Cache) {
+func (j *janitor) Run(c *SimpleCache) {
 	ticker := time.NewTicker(j.Interval)
 	for {
 		select {
 		case <-ticker.C:
-			c.DeleteExpired()
+			c.deleteExpired()
 		case <-j.stop:
 			ticker.Stop()
 			return
@@ -207,11 +114,11 @@ func (j *janitor) Run(c *Cache) {
 	}
 }
 
-func stopJanitor(c *Cache) {
+func stopJanitor(c *SimpleCache) {
 	c.janitor.stop <- true
 }
 
-func runJanitor(c *Cache, ci time.Duration) {
+func runJanitor(c *SimpleCache, ci time.Duration) {
 	j := &janitor{
 		Interval: ci,
 		stop:     make(chan bool),

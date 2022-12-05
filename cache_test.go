@@ -12,7 +12,7 @@ import (
 )
 
 func TestCache(t *testing.T) {
-	cache := New()
+	cache := New("nolimit")
 	cache.WithCallback(getmessage)
 
 	Convey(fmt.Sprintf("key %v expect %v", "123", "value_123"), t, func() {
@@ -36,7 +36,7 @@ func getmessage(key string) (m interface{}, err error) {
 }
 
 func BenchmarkGet(b *testing.B) {
-	cache := New()
+	cache := New("nolimit")
 	cache.WithCallback(getmessage)
 	for i := 0; i < b.N; i++ {
 		cache.Get("123")
@@ -67,7 +67,7 @@ func BenchmarkWriteToCache(b *testing.B) {
 }
 
 func writeToCache(b *testing.B, data []byte) {
-	cache := New()
+	cache := New("nolimit")
 	rand.Seed(time.Now().Unix())
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -87,7 +87,7 @@ func BenchmarkReadFromCache(b *testing.B) {
 }
 
 func readFromCache(b *testing.B) {
-	cache := New()
+	cache := New("nolimit")
 	cache.WithCallback(getmessage)
 	for i := 0; i < b.N; i++ {
 		cache.SetWithExp(strconv.Itoa(i), message, 100*time.Second)
@@ -108,7 +108,7 @@ func BenchmarkReadFromCacheNonExistentKeys(b *testing.B) {
 }
 
 func readFromCacheNonExistentKeys(b *testing.B) {
-	cache := New()
+	cache := New("nolimit")
 	cache.WithCallback(getmessage)
 	b.ResetTimer()
 
@@ -137,7 +137,7 @@ func readFromCacheKKeys(b *testing.B, l int) {
 	for i := 0; i < l; i++ {
 		keys[i] = i
 	}
-	cache := New()
+	cache := New("nolimit")
 	count := 0
 	cache.WithCallback(func(key string) (m interface{}, err error) {
 		count++
