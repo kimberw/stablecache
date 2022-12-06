@@ -2,6 +2,7 @@ package stablecache
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"time"
 )
@@ -9,32 +10,13 @@ import (
 type Color int8
 
 const (
-	black Color = iota
-	white Color = iota
+	defaultSize = 1000
 )
 
-type Item struct {
-	obj        interface{}
-	expiration int64
-	duration   int64
-	color      Color
-}
-
-// Expired is expired data
-func (i Item) Expired() bool {
-	if i.expiration == 0 {
-		return false
-	}
-	return time.Now().UnixNano() > i.expiration
-}
-
-// Disuse is disuse data
-func (i Item) Disuse() bool {
-	if i.color != black {
-		return false
-	}
-	return true
-}
+const (
+	black Color = iota
+	white       = iota
+)
 
 type noCopy struct{}
 
@@ -60,8 +42,9 @@ type Cache interface {
 	Get(k string) (r any, err error)
 	Set(k string, v any)
 	SetWithExp(k string, v any, dur time.Duration)
-	refresh(k string, i Item)
 	Load(ks []string)
+	deleteExpired()
+	refresh(k string, i any)
 }
 
 func randfunc(t, d int64) bool {
@@ -82,31 +65,25 @@ func randfunc(t, d int64) bool {
 func New(t string) Cache {
 	switch t {
 	case "nolimit":
-		return &SimpleCache{
-			items:           make(map[string]Item),
-			defaultDuration: 10 * time.Second,
-			randfunc:        randfunc,
-		}
+		return NewSimpleCache()
+	case "lru":
+		return NewLRUCache(defaultSize)
 	default:
-		return &SimpleCache{
-			items:           make(map[string]Item),
-			defaultDuration: 10 * time.Second,
-			randfunc:        randfunc,
-		}
+		return NewSimpleCache()
 	}
 }
 
-type janitor struct {
+type Janitor struct {
 	Interval time.Duration
 	stop     chan bool
 }
 
-func (j *janitor) Run(c *SimpleCache) {
+func (j *Janitor) Run(del func()) {
 	ticker := time.NewTicker(j.Interval)
 	for {
 		select {
 		case <-ticker.C:
-			c.deleteExpired()
+			del()
 		case <-j.stop:
 			ticker.Stop()
 			return
@@ -114,15 +91,16 @@ func (j *janitor) Run(c *SimpleCache) {
 	}
 }
 
-func stopJanitor(c *SimpleCache) {
-	c.janitor.stop <- true
+func (j *Janitor) Stop() {
+	fmt.Println("janitor stop")
+	j.stop <- true
 }
 
-func runJanitor(c *SimpleCache, ci time.Duration) {
-	j := &janitor{
+func NewJanitor(ci time.Duration, del func()) *Janitor {
+	j := &Janitor{
 		Interval: ci,
 		stop:     make(chan bool),
 	}
-	c.janitor = j
-	go j.Run(c)
+	go j.Run(del)
+	return j
 }

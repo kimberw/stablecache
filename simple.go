@@ -5,18 +5,51 @@ import (
 	"time"
 )
 
+type Item struct {
+	obj        interface{}
+	expiration int64
+	duration   int64
+	color      Color
+}
+
+// Expired is expired data
+func (i Item) Expired() bool {
+	if i.expiration == 0 {
+		return false
+	}
+	return time.Now().UnixNano() > i.expiration
+}
+
+// Disuse is disuse data
+func (i Item) Disuse() bool {
+	if i.color != black {
+		return false
+	}
+	return true
+}
+
 // SimpleCache
 type SimpleCache struct {
 	noCopy
 	defaultDuration time.Duration
 	mu              sync.RWMutex
 	items           map[string]Item
-	janitor         *janitor
-	// barrier bool
-	randfunc func(int64, int64) bool
-	caller   func(string) (interface{}, error)
-	size     uint32
+	randfunc        func(int64, int64) bool
+	caller          func(string) (interface{}, error)
+	size            uint32
 	// order Order
+}
+
+func (c *SimpleCache) clean() {
+}
+
+// NewSimpleCache new cache
+func NewSimpleCache() *SimpleCache {
+	return &SimpleCache{
+		items:           make(map[string]Item),
+		defaultDuration: 10 * time.Second,
+		randfunc:        randfunc,
+	}
 }
 
 // WithCallback set callback
@@ -85,13 +118,14 @@ func (c *SimpleCache) SetWithExp(k string, v any, dur time.Duration) {
 	c.mu.Unlock()
 }
 
-func (c *SimpleCache) refresh(k string, i Item) {
+func (c *SimpleCache) refresh(k string, i any) {
 	if c.caller == nil {
 		return
 	}
-	t := i.expiration - time.Now().UnixNano()
-	if t > 0 && t*100/i.duration < 30 {
-		if c.randfunc != nil && !c.randfunc(t, i.duration) {
+	item := i.(Item)
+	t := item.expiration - time.Now().UnixNano()
+	if t > 0 && t*100/item.duration < 30 {
+		if c.randfunc != nil && !c.randfunc(t, item.duration) {
 			return
 		}
 		v, err := c.caller(k)
