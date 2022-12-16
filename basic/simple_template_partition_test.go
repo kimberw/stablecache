@@ -1,9 +1,8 @@
-package stablecache
+package basic
 
 import (
 	"fmt"
 	"math/rand"
-	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -11,12 +10,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func getmessage2(key string) (m interface{}, err error) {
-	return message, nil
-}
-
-func TestLRUCache(t *testing.T) {
-	cache := NewLRUCache(defaultSize)
+func TestPartitionCache(t *testing.T) {
+	cache := NewPartitionCache[string, []byte]()
 	cache.WithCallback(getmessage2)
 
 	Convey(fmt.Sprintf("key %v expect %v", "123", "value_123"), t, func() {
@@ -25,47 +20,43 @@ func TestLRUCache(t *testing.T) {
 		key := "123"
 		value, err := cache.Get(key)
 		So(err, ShouldResemble, nil)
-		So(value, ShouldResemble, message)
+		So(value, ShouldResemble, message2)
 	})
-	cache = nil
-	runtime.GC()
 }
 
-func BenchmarkGetLRUCache(b *testing.B) {
-	cache := NewLRUCache(defaultSize)
+func BenchmarkGetPartitionCache(b *testing.B) {
+	cache := NewPartitionCache[string, []byte]()
 	cache.WithCallback(getmessage2)
 	for i := 0; i < b.N; i++ {
 		cache.Get("123")
 	}
-	cache = nil
-	runtime.GC()
 }
 
-func BenchmarkWriteToLRUCache(b *testing.B) {
+func BenchmarkWriteToPartitionCache(b *testing.B) {
 	b.Run("_size2^6", func(b *testing.B) {
-		m := blob('a', 1<<6)
-		writeToLRUCache(b, m)
+		m := blob2('a', 1<<6)
+		writeToPartitionCache(b, m)
 	})
 	b.Run("_size2^8", func(b *testing.B) {
-		m := blob('a', 1<<8)
-		writeToLRUCache(b, m)
+		m := blob2('a', 1<<8)
+		writeToPartitionCache(b, m)
 	})
 	b.Run("_size2^10", func(b *testing.B) {
-		m := blob('a', 1<<10)
-		writeToLRUCache(b, m)
+		m := blob2('a', 1<<10)
+		writeToPartitionCache(b, m)
 	})
 	b.Run("_size2^15", func(b *testing.B) {
-		m := blob('a', 1<<15)
-		writeToLRUCache(b, m)
+		m := blob2('a', 1<<15)
+		writeToPartitionCache(b, m)
 	})
 	b.Run("_size2^20", func(b *testing.B) {
-		m := blob('a', 1<<20)
-		writeToLRUCache(b, m)
+		m := blob2('a', 1<<20)
+		writeToPartitionCache(b, m)
 	})
 }
 
-func writeToLRUCache(b *testing.B, data []byte) {
-	cache := NewLRUCache(defaultSize)
+func writeToPartitionCache(b *testing.B, data []byte) {
+	cache := NewPartitionCache[string, []byte]()
 	rand.Seed(time.Now().Unix())
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -80,15 +71,15 @@ func writeToLRUCache(b *testing.B, data []byte) {
 	})
 }
 
-func BenchmarkReadFromLRUCache(b *testing.B) {
-	readFromLRUCache(b)
+func BenchmarkReadFromPartitionCache(b *testing.B) {
+	readFromPartitionCache(b)
 }
 
-func readFromLRUCache(b *testing.B) {
-	cache := NewLRUCache(defaultSize)
+func readFromPartitionCache(b *testing.B) {
+	cache := NewPartitionCache[string, []byte]()
 	cache.WithCallback(getmessage2)
 	for i := 0; i < b.N; i++ {
-		cache.SetWithExp(strconv.Itoa(i), message, 100*time.Second)
+		cache.SetWithExp(strconv.Itoa(i), message2, 100*time.Second)
 	}
 	b.ResetTimer()
 
@@ -101,12 +92,12 @@ func readFromLRUCache(b *testing.B) {
 	})
 }
 
-func BenchmarkReadFromLRUCacheNonExistentKeys(b *testing.B) {
-	readFromLRUCacheNonExistentKeys(b)
+func BenchmarkReadFromPartitionCacheNonExistentKeys(b *testing.B) {
+	readFromPartitionCacheNonExistentKeys(b)
 }
 
-func readFromLRUCacheNonExistentKeys(b *testing.B) {
-	cache := NewLRUCache(defaultSize)
+func readFromPartitionCacheNonExistentKeys(b *testing.B) {
+	cache := NewPartitionCache[string, []byte]()
 	cache.WithCallback(getmessage2)
 	b.ResetTimer()
 
@@ -120,22 +111,22 @@ func readFromLRUCacheNonExistentKeys(b *testing.B) {
 }
 
 // 运行 1分钟 1个key 请求 穿透下游次数
-// go test -bench=BenchmarkReadLRUCache -benchtime=6s
-func BenchmarkReadLRUCache(b *testing.B) {
+// go test -bench=BenchmarkReadPartitionCache -benchtime=6s
+func BenchmarkReadPartitionCache(b *testing.B) {
 	lens := []int{1, 10, 100, 1000, 10000}
 	for _, l := range lens {
 		b.Run(fmt.Sprintf("request %d", l), func(b *testing.B) {
-			readFromLRUCacheKKeys(b, l)
+			readFromPartitionCacheKKeys(b, l)
 		})
 	}
 }
 
-func readFromLRUCacheKKeys(b *testing.B, l int) {
+func readFromPartitionCacheKKeys(b *testing.B, l int) {
 	keys := make([]int, l)
 	for i := 0; i < l; i++ {
 		keys[i] = i
 	}
-	cache := NewLRUCache(defaultSize)
+	cache := NewPartitionCache[string, []byte]()
 	cache.WithCallback(getmessage2)
 	b.ResetTimer()
 

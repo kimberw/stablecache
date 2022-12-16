@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"stablecache/basic"
 	"time"
 )
 
@@ -36,15 +37,12 @@ var (
 	Disuse   = errors.New("disuse")
 )
 
-type Cache interface {
-	WithCallback(func(string) (interface{}, error))
+type Cache[K comparable, V any] interface {
+	WithCallback(func(K) (V, error))
 	WithRandfunc(func(int64, int64) bool)
-	Get(k string) (r any, err error)
-	Set(k string, v any)
-	SetWithExp(k string, v any, dur time.Duration)
-	Load(ks []string)
-	deleteExpired()
-	refresh(k string, i any)
+	Get(K) (V, error)
+	Set(K, V)
+	SetWithExp(K, V, time.Duration)
 }
 
 func randfunc(t, d int64) bool {
@@ -62,14 +60,15 @@ func randfunc(t, d int64) bool {
 // - limit_lfu
 // - fragmented
 
-func New(t string) Cache {
+func New[K comparable, V any](t string) Cache[K, V] {
 	switch t {
-	case "nolimit":
-		return NewSimpleCache()
+	case "normal":
+		return basic.NewPartitionCache[K, V]()
 	case "lru":
-		return NewLRUCache(defaultSize)
+		// return NewLRUCache(defaultSize)
+		return basic.NewPartitionCache[K, V]()
 	default:
-		return NewSimpleCache()
+		return basic.NewPartitionCache[K, V]()
 	}
 }
 

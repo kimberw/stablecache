@@ -1,19 +1,20 @@
-package stablecache
+package basic
 
 import (
 	"sync"
 	"time"
 )
 
-type Item struct {
-	obj        interface{}
+type TemplateItem[K comparable, V any] struct {
+	obj        V
+	k          K
 	expiration int64
 	duration   int64
 	color      Color
 }
 
 // Expired is expired data
-func (i Item) Expired() bool {
+func (i TemplateItem[K, V]) Expired() bool {
 	if i.expiration == 0 {
 		return false
 	}
@@ -21,84 +22,84 @@ func (i Item) Expired() bool {
 }
 
 // Disuse is disuse data
-func (i Item) Disuse() bool {
+func (i TemplateItem[K, V]) Disuse() bool {
 	if i.color != black {
 		return false
 	}
 	return true
 }
 
-// SimpleCache
-type SimpleCache struct {
+// TemplateCache
+type TemplateCache[K comparable, V any] struct {
 	noCopy
 	defaultDuration time.Duration
 	mu              sync.RWMutex
-	items           map[string]Item
+	items           map[K]TemplateItem[K, V]
 	randfunc        func(int64, int64) bool
-	caller          func(string) (interface{}, error)
+	caller          func(K) (V, error)
 	size            uint32
 	// order Order
 }
 
-func (c *SimpleCache) clean() {
+func (c *TemplateCache[K, V]) clean() {
 }
 
-// NewSimpleCache new cache
-func NewSimpleCache() *SimpleCache {
-	return &SimpleCache{
-		items:           make(map[string]Item),
+// NewTemplateCache new cache
+func NewTemplateCache[K comparable, V any]() *TemplateCache[K, V] {
+	return &TemplateCache[K, V]{
+		items:           make(map[K]TemplateItem[K, V]),
 		defaultDuration: 10 * time.Second,
 		randfunc:        randfunc,
 	}
 }
 
 // WithCallback set callback
-func (c *SimpleCache) WithCallback(call func(string) (interface{}, error)) {
+func (c *TemplateCache[K, V]) WithCallback(call func(K) (V, error)) {
 	c.caller = call
 }
 
 // WithRandfunc set rand func
-func (c *SimpleCache) WithRandfunc(call func(int64, int64) bool) {
+func (c *TemplateCache[K, V]) WithRandfunc(call func(int64, int64) bool) {
 	c.randfunc = call
 }
 
-// Get SimpleCache value
+// Get TemplateCache value
 // error maybe not found, timeout
-func (c *SimpleCache) Get(k string) (r any, err error) {
+func (c *TemplateCache[K, V]) Get(k K) (r V, err error) {
 	c.mu.RLock()
-	v, ok := c.items[k]
+	item, ok := c.items[k]
 	if !ok {
 		if c.caller == nil {
-			return nil, NotFound
+			return r, NotFound
 		}
 		c.mu.RUnlock()
 		v, err := c.caller(k)
 		if err != nil {
-			return nil, NotFound
+			return r, NotFound
 		}
 		c.SetWithExp(k, v, c.defaultDuration)
 		return v, nil
 	}
 	c.mu.RUnlock()
-	if v.Expired() {
-		c.refresh(k, v)
-		return v.obj, Timeout
+	if item.Expired() {
+		c.refresh(k, item)
+		return item.obj, Timeout
 	}
-	if v.Disuse() {
-		c.refresh(k, v)
-		return v.obj, Disuse
+	if item.Disuse() {
+		c.refresh(k, item)
+		return item.obj, Disuse
 	}
-	c.refresh(k, v)
-	return v.obj, nil
+	c.refresh(k, item)
+	return item.obj, nil
 }
 
-// Set set SimpleCache
-func (c *SimpleCache) Set(k string, v any) {
+// Set set TemplateCache
+func (c *TemplateCache[K, V]) Set(k K, v V) {
 	c.SetWithExp(k, v, c.defaultDuration)
 }
 
-// SetWithExp actively set SimpleCache value
-func (c *SimpleCache) SetWithExp(k string, v any, dur time.Duration) {
+// SetWithExp actively set TemplateCache value
+func (c *TemplateCache[K, V]) SetWithExp(k K, v V, dur time.Duration) {
 	c.mu.Lock()
 	i, ok := c.items[k]
 	if ok {
@@ -109,7 +110,7 @@ func (c *SimpleCache) SetWithExp(k string, v any, dur time.Duration) {
 		c.mu.Unlock()
 		return
 	}
-	c.items[k] = Item{
+	c.items[k] = TemplateItem[K, V]{
 		obj:        v,
 		expiration: time.Now().Add(dur).UnixNano(),
 		duration:   int64(dur),
@@ -118,14 +119,13 @@ func (c *SimpleCache) SetWithExp(k string, v any, dur time.Duration) {
 	c.mu.Unlock()
 }
 
-func (c *SimpleCache) refresh(k string, i any) {
+func (c *TemplateCache[K, V]) refresh(k K, tItem TemplateItem[K, V]) {
 	if c.caller == nil {
 		return
 	}
-	item := i.(Item)
-	t := item.expiration - time.Now().UnixNano()
-	if t > 0 && t*100/item.duration < 30 {
-		if c.randfunc != nil && !c.randfunc(t, item.duration) {
+	t := tItem.expiration - time.Now().UnixNano()
+	if t > 0 && t*100/tItem.duration < 30 {
+		if c.randfunc != nil && !c.randfunc(t, tItem.duration) {
 			return
 		}
 		v, err := c.caller(k)
@@ -136,7 +136,7 @@ func (c *SimpleCache) refresh(k string, i any) {
 }
 
 // Load load keys avoid concurrent large traffic penetration
-func (c *SimpleCache) Load(ks []string) {
+func (c *TemplateCache[K, V]) Load(ks []K) {
 	if c.caller == nil {
 		return
 	}
@@ -148,6 +148,6 @@ func (c *SimpleCache) Load(ks []string) {
 	}
 }
 
-func (c *SimpleCache) deleteExpired() {
+func (c *TemplateCache[K, V]) deleteExpired() {
 	// TODO:
 }
