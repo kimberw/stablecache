@@ -1,0 +1,31 @@
+lru partition vs lru
+goos: darwin
+goarch: arm64
+pkg: stablecache
+BenchmarkGetLRUPartitionCache-10                        	 9553214	       117.3 ns/op
+BenchmarkWriteToLRUPartitionCache/_size2^6-10           	 3714262	       355.1 ns/op	     534 B/op	       5 allocs/op
+BenchmarkWriteToLRUPartitionCache/_size2^8-10           	 4251862	       415.4 ns/op	     481 B/op	       5 allocs/op
+BenchmarkWriteToLRUPartitionCache/_size2^10-10          	 3767030	       332.0 ns/op	     528 B/op	       5 allocs/op
+BenchmarkWriteToLRUPartitionCache/_size2^15-10          	 4236128	       341.1 ns/op	     482 B/op	       5 allocs/op
+BenchmarkWriteToLRUPartitionCache/_size2^20-10          	 4070940	       323.1 ns/op	     497 B/op	       5 allocs/op
+BenchmarkReadFromLRUPartitionCache-10                   	 2716176	       450.0 ns/op	       7 B/op	       0 allocs/op
+BenchmarkReadFromLRUPartitionCacheNonExistentKeys-10    	 2111180	       552.1 ns/op	     720 B/op	       3 allocs/op
+BenchmarkReadLRUPartitionCache/request_1-10             	 7370876	       163.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkReadLRUPartitionCache/request_10-10            	 7184007	       161.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkReadLRUPartitionCache/request_100-10           	 7324524	       176.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkReadLRUPartitionCache/request_1000-10          	 7267666	       176.6 ns/op	       3 B/op	       1 allocs/op
+BenchmarkReadLRUPartitionCache/request_10000-10         	 7404067	       186.6 ns/op	       4 B/op	       1 allocs/op
+BenchmarkGetLRUCache-10                                 	       1	3391916833 ns/op
+BenchmarkWriteToLRUCache/_size2^6-10                    	 1450276	       787.8 ns/op	     412 B/op	       6 allocs/op
+BenchmarkWriteToLRUCache/_size2^8-10                    	 1437154	       849.1 ns/op	     414 B/op	       6 allocs/op
+BenchmarkWriteToLRUCache/_size2^10-10                   	 1430778	       788.9 ns/op	     415 B/op	       6 allocs/op
+BenchmarkWriteToLRUCache/_size2^15-10                   	 1428897	       883.0 ns/op	     415 B/op	       6 allocs/op
+BenchmarkWriteToLRUCache/_size2^20-10                   	 1456754	       776.0 ns/op	     412 B/op	       6 allocs/op
+BenchmarkReadFromLRUCache-10                            	 2689078	       459.8 ns/op	       7 B/op	       0 allocs/op
+BenchmarkReadFromLRUCacheNonExistentKeys-10             	 1804980	       754.3 ns/op	     281 B/op	       2 allocs/op
+BenchmarkReadLRUCache/request_1-10                      	 7532059	       143.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkReadLRUCache/request_10-10                     	 7566340	       167.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkReadLRUCache/request_100-10                    	 8466608	       159.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkReadLRUCache/request_1000-10                   	 7830207	       138.4 ns/op	       3 B/op	       1 allocs/op
+BenchmarkReadLRUCache/request_10000-10                  	 7298546	       171.1 ns/op	       4 B/op	       1 allocs/op
+PASS

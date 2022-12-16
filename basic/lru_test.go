@@ -1,4 +1,4 @@
-package stablecache
+package basic
 
 import (
 	"fmt"
@@ -12,24 +12,23 @@ import (
 )
 
 func TestLRUCache(t *testing.T) {
-	cache := NewLRUCache[string, []byte](defaultSize)
+	cache := NewLRUCache(defaultSize)
 	cache.WithCallback(getmessage)
 
 	Convey(fmt.Sprintf("key %v expect %v", "123", "value_123"), t, func() {
 		// So(reverse1(item.from, item.to), ShouldResemble, item.result)
 		// So(reverse2(item.from, item.to), ShouldResemble, item.result)
 		key := "123"
-		v, _ := getmessage(key)
 		value, err := cache.Get(key)
 		So(err, ShouldResemble, nil)
-		So(value, ShouldResemble, v)
+		So(value, ShouldResemble, message)
 	})
 	cache = nil
 	runtime.GC()
 }
 
 func BenchmarkGetLRUCache(b *testing.B) {
-	cache := NewLRUCache[string, []byte](defaultSize)
+	cache := NewLRUCache(defaultSize)
 	cache.WithCallback(getmessage)
 	for i := 0; i < b.N; i++ {
 		cache.Get("123")
@@ -62,7 +61,7 @@ func BenchmarkWriteToLRUCache(b *testing.B) {
 }
 
 func writeToLRUCache(b *testing.B, data []byte) {
-	cache := NewLRUCache[string, []byte](defaultSize)
+	cache := NewLRUCache(defaultSize)
 	rand.Seed(time.Now().Unix())
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -82,7 +81,7 @@ func BenchmarkReadFromLRUCache(b *testing.B) {
 }
 
 func readFromLRUCache(b *testing.B) {
-	cache := NewLRUCache[string, []byte](defaultSize)
+	cache := NewLRUCache(defaultSize)
 	cache.WithCallback(getmessage)
 	for i := 0; i < b.N; i++ {
 		cache.SetWithExp(strconv.Itoa(i), message, 100*time.Second)
@@ -103,7 +102,7 @@ func BenchmarkReadFromLRUCacheNonExistentKeys(b *testing.B) {
 }
 
 func readFromLRUCacheNonExistentKeys(b *testing.B) {
-	cache := NewLRUCache[string, []byte](defaultSize)
+	cache := NewLRUCache(defaultSize)
 	cache.WithCallback(getmessage)
 	b.ResetTimer()
 
@@ -132,7 +131,7 @@ func readFromLRUCacheKKeys(b *testing.B, l int) {
 	for i := 0; i < l; i++ {
 		keys[i] = i
 	}
-	cache := NewLRUCache[string, []byte](defaultSize)
+	cache := NewLRUCache(defaultSize)
 	cache.WithCallback(getmessage)
 	b.ResetTimer()
 

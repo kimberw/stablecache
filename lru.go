@@ -4,22 +4,15 @@ import (
 	"container/list"
 	"fmt"
 	"runtime"
+	"stablecache/basic"
 	"sync"
 	"time"
+	"unsafe"
 )
 
-const (
-	deleteNums = 10
-)
-
-type LRUList struct {
-	timestamp uint64
-	key       string
-}
-
-type LRUItem struct {
-	key        string
-	obj        interface{}
+type LRUItem[K comparable, V any] struct {
+	obj        V
+	key        K
 	expiration int64
 	duration   int64
 	color      Color
@@ -27,7 +20,7 @@ type LRUItem struct {
 }
 
 // Expired is expired data
-func (i *LRUItem) Expired() bool {
+func (i *LRUItem[K, V]) Expired() bool {
 	if i.expiration == 0 {
 		return false
 	}
@@ -35,175 +28,236 @@ func (i *LRUItem) Expired() bool {
 }
 
 // Disuse is disuse data
-func (i *LRUItem) Disuse() bool {
+func (i *LRUItem[K, V]) Disuse() bool {
 	if i.color != black {
 		return false
 	}
 	return true
 }
 
-// LRUCache
-type LRUCache struct {
+// LRUBucket
+type LRUBucket[K comparable, V any] struct {
 	noCopy
 	defaultDuration time.Duration
 	mu              sync.RWMutex
-	items           map[string]LRUItem
-	janitor         *Janitor
-	randfunc        func(int64, int64) bool
-	caller          func(string) (interface{}, error)
-	size            uint32
+	items           map[uintptr]LRUItem[K, V]
 	order           *list.List
+	size            uint64
+}
+
+func (b *LRUBucket[K, V]) clean() {
+}
+
+func (b *LRUBucket[K, V]) initBucket(size uint64) {
+	b.items = make(map[uintptr]LRUItem[K, V])
+	b.order = list.New()
+	b.size = size
+}
+
+// Get LRUBucket value
+// error maybe not found, timeout
+func (b *LRUBucket[K, V]) Get(p *LRUCache[K, V], k K, h uintptr) (r V, err error) {
+	b.mu.RLock()
+	item, ok := b.items[h]
+	if !ok || item.key != k {
+		if p.caller == nil {
+			return r, NotFound
+		}
+		b.mu.RUnlock()
+		v, err := p.caller(k)
+		if err != nil {
+			return r, NotFound
+		}
+		b.SetWithExp(k, v, h, p.defaultDuration)
+		return v, nil
+	}
+	b.mu.RUnlock()
+	b.mu.Lock()
+	b.move(item.p)
+	b.mu.Unlock()
+	if item.Expired() {
+		b.refresh(p, k, h, item)
+		return item.obj, Timeout
+	}
+	if item.Disuse() {
+		b.refresh(p, k, h, item)
+		return item.obj, Disuse
+	}
+	b.refresh(p, k, h, item)
+	return item.obj, nil
+}
+
+// SetWithExp actively set LRUBucket value
+func (b *LRUBucket[K, V]) SetWithExp(k K, v V, h uintptr, dur time.Duration) (*list.Element, bool) {
+	b.mu.Lock()
+	i, ok := b.items[h]
+	if ok {
+		i.key = k
+		i.obj = v
+		i.expiration = time.Now().Add(dur).UnixNano()
+		i.duration = int64(dur)
+		b.mu.Unlock()
+		return i.p, true
+	}
+	p := b.add(k)
+	b.items[h] = LRUItem[K, V]{
+		key:        k,
+		obj:        v,
+		expiration: time.Now().Add(dur).UnixNano(),
+		duration:   int64(dur),
+		color:      black,
+		p:          p,
+	}
+	b.mu.Unlock()
+	return p, true
+}
+
+func (b *LRUBucket[K, V]) refresh(p *LRUCache[K, V], k K, h uintptr, tItem LRUItem[K, V]) {
+	if p.caller == nil {
+		return
+	}
+	t := tItem.expiration - time.Now().UnixNano()
+	if t > 0 && t*100/tItem.duration < 30 {
+		if p.randfunc != nil && !p.randfunc(t, tItem.duration) {
+			return
+		}
+		v, err := p.caller(k)
+		if err == nil {
+			b.SetWithExp(k, v, h, p.defaultDuration)
+		}
+	}
+}
+
+func (b *LRUBucket[K, V]) deleteExpired() {
+	now := time.Now().UnixNano()
+	i := 0
+	b.mu.Lock()
+	for k, item := range b.items {
+		if i >= basic.DeleteNums {
+			break
+		}
+		if item.expiration < now {
+			i++
+			// b.remove(c.items[k])
+			delete(b.items, k)
+		}
+	}
+	b.mu.Unlock()
+}
+
+func (b *LRUBucket[K, V]) move(e *list.Element) {
+	if e != nil {
+		b.order.MoveToFront(e)
+	}
+}
+
+func (b *LRUBucket[K, V]) add(key K) *list.Element {
+	return b.order.PushFront(key)
+}
+
+func (b *LRUBucket[K, V]) remove(e *list.Element) {
+	b.order.Remove(e)
+}
+
+// LRUCache
+type LRUCache[K comparable, V any] struct {
+	noCopy
+	defaultDuration time.Duration
+	mask            uintptr
+	buckets         []LRUBucket[K, V]
+	randfunc        func(int64, int64) bool
+	caller          func(K) (V, error)
+	janitor         *Janitor
 }
 
 // NewLRUCache new cache
-func NewLRUCache(size uint32) *LRUCache {
-	c := &LRUCache{
-		items:           make(map[string]LRUItem),
+func NewLRUCache[K comparable, V any](size uint64) *LRUCache[K, V] {
+	c := &LRUCache[K, V]{
+		mask:            uintptr(basic.InitialSize - 1),
+		buckets:         make([]LRUBucket[K, V], basic.InitialSize),
 		defaultDuration: 10 * time.Second,
 		randfunc:        randfunc,
-		order:           list.New(),
-		size:            size,
 	}
+	c.initBucket(size)
 	j := NewJanitor(1*time.Second, c.deleteExpired)
-	runtime.SetFinalizer(c, (*LRUCache).clean)
+	runtime.SetFinalizer(c, (*LRUCache[K, V]).clean)
 	c.janitor = j
 	return c
 }
 
-func (c *LRUCache) clean() {
+func (c *LRUCache[K, V]) initBucket(size uint64) {
+	for i := range c.buckets {
+		c.buckets[i].initBucket(size/basic.InitialSize + 1)
+	}
+}
+func (c *LRUCache[K, V]) clean() {
 	fmt.Println("lru stop")
 	if c.janitor != nil {
 		c.janitor.Stop()
 		c.janitor = nil
 	}
-	c = nil
 }
 
 // WithCallback set callback
-func (c *LRUCache) WithCallback(call func(string) (interface{}, error)) {
+func (c *LRUCache[K, V]) WithCallback(call func(K) (V, error)) {
 	c.caller = call
 }
 
 // WithRandfunc set rand func
-func (c *LRUCache) WithRandfunc(call func(int64, int64) bool) {
+func (c *LRUCache[K, V]) WithRandfunc(call func(int64, int64) bool) {
 	c.randfunc = call
 }
-
-// Get LRUCache value
-// error maybe not found, timeout
-func (c *LRUCache) Get(k string) (r any, err error) {
-	c.mu.RLock()
-	v, ok := c.items[k]
-	if !ok {
-		if c.caller == nil {
-			return nil, NotFound
-		}
-		c.mu.RUnlock()
-		v, err := c.caller(k)
-		if err != nil {
-			return nil, NotFound
-		}
-		c.SetWithExp(k, v, c.defaultDuration)
-		return v, nil
-	}
-	c.mu.RUnlock()
-	if v.Expired() {
-		c.refresh(k, v)
-		return v.obj, Timeout
-	}
-	if v.Disuse() {
-		c.refresh(k, v)
-		return v.obj, Disuse
-	}
-	c.refresh(k, v)
-	return v.obj, nil
+func ehash(i interface{}) uintptr {
+	return nilinterhash(noescape(unsafe.Pointer(&i)), 0xdeadbeef)
 }
 
-// Set set LRUCache
-func (c *LRUCache) Set(k string, v any) {
+//go:linkname nilinterhash runtime.nilinterhash
+func nilinterhash(p unsafe.Pointer, h uintptr) uintptr
+
+//go:nocheckptr
+//go:nosplit
+func noescape(p unsafe.Pointer) unsafe.Pointer {
+	x := uintptr(p)
+	return unsafe.Pointer(x ^ 0)
+}
+
+func (c *LRUCache[K, V]) Get(k K) (r V, err error) {
+	hash := ehash(k)
+	i := hash & c.mask
+	b := &(c.buckets[i])
+	r, err = b.Get(c, k, hash)
+	return
+}
+
+func (c *LRUCache[K, V]) Set(k K, v V) {
 	c.SetWithExp(k, v, c.defaultDuration)
 }
 
-// SetWithExp actively set LRUCache value
-func (c *LRUCache) SetWithExp(k string, v any, dur time.Duration) {
-	c.mu.Lock()
-	i, ok := c.items[k]
-	if ok {
-		i.obj = v
-		i.expiration = time.Now().Add(dur).UnixNano()
-		i.duration = int64(dur)
-		// c.items[k] = i
-		c.mu.Unlock()
-		return
-	}
-	c.items[k] = LRUItem{
-		obj:        v,
-		expiration: time.Now().Add(dur).UnixNano(),
-		duration:   int64(dur),
-		color:      black,
-		p:          c.add(k),
-	}
-	c.mu.Unlock()
-}
-
-func (c *LRUCache) move(item LRUItem) {
-	if item.p != nil {
-		c.order.MoveToFront(item.p)
+// SetWithExp actively set LRUBucket value
+func (c *LRUCache[K, V]) SetWithExp(k K, v V, dur time.Duration) {
+	hash := ehash(k)
+	i := hash & c.mask
+	b := &(c.buckets[i])
+	p, exsit := b.SetWithExp(k, v, hash, dur)
+	if exsit {
+		b.move(p)
 	}
 }
 
-func (c *LRUCache) add(key string) *list.Element {
-	return c.order.PushFront(key)
-}
-
-func (c *LRUCache) remove(item LRUItem) {
-	c.order.Remove(item.p)
-}
-
-func (c *LRUCache) refresh(k string, i any) {
-	item := i.(LRUItem)
-	c.move(item)
-	if c.caller == nil {
-		return
-	}
-	t := item.expiration - time.Now().UnixNano()
-	if t > 0 && t*100/item.duration < 30 {
-		if c.randfunc != nil && !c.randfunc(t, item.duration) {
-			return
-		}
-		v, err := c.caller(k)
-		if err == nil {
-			c.SetWithExp(k, v, c.defaultDuration)
-		}
-	}
-}
-
-// Load load keys avoid concurrent large traffic penetration
-func (c *LRUCache) Load(ks []string) {
-	if c.caller == nil {
-		return
-	}
-	for _, k := range ks {
-		v, err := c.caller(k)
-		if err == nil {
-			c.SetWithExp(k, v, c.defaultDuration)
-		}
-	}
-}
-
-func (c *LRUCache) deleteExpired() {
-	now := time.Now().UnixNano()
-	i := 0
-	c.mu.Lock()
-	for k, item := range c.items {
-		if i >= deleteNums {
-			break
-		}
-		if item.expiration < now {
-			i++
-			c.remove(c.items[k])
-			delete(c.items, k)
-		}
-	}
-	c.mu.Unlock()
+func (c *LRUCache[K, V]) deleteExpired() {
+	// TODO: delete list
+	// now := time.Now().UnixNano()
+	// i := 0
+	// c.mu.Lock()
+	// for k, item := range c.items {
+	// 	if i >= deleteNums {
+	// 		break
+	// 	}
+	// 	if item.expiration < now {
+	// 		i++
+	// 		c.remove(c.items[k])
+	// 		delete(c.items, k)
+	// 	}
+	// }
+	// c.mu.Unlock()
 }

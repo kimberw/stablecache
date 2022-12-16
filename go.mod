@@ -2,6 +2,8 @@ module stablecache
 
 go 1.19
 
+replace basic => ./basic
+
 require github.com/smartystreets/goconvey v1.7.2
 
 require (

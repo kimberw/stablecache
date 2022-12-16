@@ -7,9 +7,7 @@ import (
 )
 
 const (
-	mInitialSize           = 1 << 4
-	mOverflowThreshold     = 1 << 6
-	mOverflowGrowThreshold = 1 << 7
+	InitialSize = 1 << 4
 )
 
 // PartitionCache
@@ -40,8 +38,8 @@ func (b *bucket[K, V]) initBucket() {
 // NewPartitionCache new cache
 func NewPartitionCache[K comparable, V any]() *PartitionCache[K, V] {
 	c := &PartitionCache[K, V]{
-		mask:            uintptr(mInitialSize - 1),
-		buckets:         make([]bucket[K, V], mInitialSize),
+		mask:            uintptr(InitialSize - 1),
+		buckets:         make([]bucket[K, V], InitialSize),
 		defaultDuration: 10 * time.Second,
 		randfunc:        randfunc,
 	}
