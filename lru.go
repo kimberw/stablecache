@@ -15,7 +15,6 @@ type LRUItem[K comparable, V any] struct {
 	key        K
 	expiration int64
 	duration   int64
-	color      Color
 	p          *list.Element
 }
 
@@ -25,14 +24,6 @@ func (i *LRUItem[K, V]) Expired() bool {
 		return false
 	}
 	return time.Now().UnixNano() > i.expiration
-}
-
-// Disuse is disuse data
-func (i *LRUItem[K, V]) Disuse() bool {
-	if i.color != black {
-		return false
-	}
-	return true
 }
 
 // LRUBucket
@@ -46,6 +37,8 @@ type LRUBucket[K comparable, V any] struct {
 }
 
 func (b *LRUBucket[K, V]) clean() {
+	b.order = nil
+	b.items = nil
 }
 
 func (b *LRUBucket[K, V]) initBucket(size uint64) {
@@ -79,10 +72,6 @@ func (b *LRUBucket[K, V]) Get(p *LRUCache[K, V], k K, h uintptr) (r V, err error
 		b.refresh(p, k, h, item)
 		return item.obj, Timeout
 	}
-	if item.Disuse() {
-		b.refresh(p, k, h, item)
-		return item.obj, Disuse
-	}
 	b.refresh(p, k, h, item)
 	return item.obj, nil
 }
@@ -105,7 +94,6 @@ func (b *LRUBucket[K, V]) SetWithExp(k K, v V, h uintptr, dur time.Duration) (*l
 		obj:        v,
 		expiration: time.Now().Add(dur).UnixNano(),
 		duration:   int64(dur),
-		color:      black,
 		p:          p,
 	}
 	b.mu.Unlock()
@@ -138,7 +126,7 @@ func (b *LRUBucket[K, V]) deleteExpired() {
 		}
 		if item.expiration < now {
 			i++
-			// b.remove(c.items[k])
+			b.remove(item.p)
 			delete(b.items, k)
 		}
 	}
@@ -196,6 +184,9 @@ func (c *LRUCache[K, V]) clean() {
 		c.janitor.Stop()
 		c.janitor = nil
 	}
+	for i := range c.buckets {
+		c.buckets[i].clean()
+	}
 }
 
 // WithCallback set callback
@@ -245,19 +236,7 @@ func (c *LRUCache[K, V]) SetWithExp(k K, v V, dur time.Duration) {
 }
 
 func (c *LRUCache[K, V]) deleteExpired() {
-	// TODO: delete list
-	// now := time.Now().UnixNano()
-	// i := 0
-	// c.mu.Lock()
-	// for k, item := range c.items {
-	// 	if i >= deleteNums {
-	// 		break
-	// 	}
-	// 	if item.expiration < now {
-	// 		i++
-	// 		c.remove(c.items[k])
-	// 		delete(c.items, k)
-	// 	}
-	// }
-	// c.mu.Unlock()
+	for i := range c.buckets {
+		c.buckets[i].deleteExpired()
+	}
 }
